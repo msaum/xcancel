@@ -12,102 +12,141 @@ For example, a message containing `https://x.com/example/status/123` receives th
 
 The app uses Slack Socket Mode, so it can run locally without a public HTTP endpoint. It serves one Slack workspace and processes new human messages, including messages posted in existing threads. Message edits, deletion events, bot messages, and messages without matching URLs are ignored.
 
-## Requirements
+## Bring the app up with the Slack CLI
 
-- Python 3
-- A Slack workspace where you can install apps
-- The Slack CLI, if you want to install or run the app through the CLI
+The CLI obtains the bot and app-level tokens and passes them to the Python process when you run `slack run`. You do not need to copy tokens or export environment variables for this workflow.
 
-## Install
+The bot runs on the computer executing the command. Keep that computer awake, connected to the internet, and the process running while testing. Installing the app with `--environment deployed` records an installation in Slack; it does not host this Python app.
 
-Create and activate a virtual environment, then install the pinned dependencies:
+### 1. Prepare the project
+
+Install Python 3 and the [Slack CLI](https://docs.slack.dev/tools/slack-cli/guides/installing-the-slack-cli-for-mac-and-linux/). You need permission to install apps in the target workspace.
+
+For a fresh checkout:
 
 ```sh
+git clone https://github.com/msaum/xcancel.git
+cd xcancel
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-The dependencies include `slack-cli-hooks`, which lets the same app run through the Slack CLI.
+For an existing checkout, open a terminal in its project directory. All subsequent commands run there. The CLI hook in `.slack/hooks.json` explicitly uses `.venv/bin/python`, so keep that environment at the project root.
 
-## Create and install the Slack app
-
-### Using the Slack CLI
-
-Run these commands from the project directory after completing the virtual environment setup above. The CLI hook uses `.venv/bin/python`, so the environment must exist at that path and contain the installed dependencies.
-
-Sign in to the workspace where you want to install the bot:
+### 2. Authenticate the CLI
 
 ```sh
 slack login
 slack auth list
 ```
 
-If you are already authenticated, use `slack auth list` to find your workspace's team ID. For AI Systems Guild, the workspace name is `buildaisystems` and the team ID is `T1YQ7DT88`.
+Complete the login prompts using the Slack account that can manage the app. If already signed in, `slack auth list` is enough to confirm the workspace and team ID.
 
-Install the app using this project's `manifest.json`, then verify its status:
+Find your workspace's team ID in `slack auth list`. The examples below use `YOUR_TEAM_ID` and `YOUR_APP_ID` as placeholders. Replace them with your workspace's team ID and the app ID returned by installation.
+
+### 3. Select or install the app
+
+Check the project's saved installations:
 
 ```sh
-slack app install --team T1YQ7DT88 --environment deployed
-slack app list --team T1YQ7DT88
+slack app list --team YOUR_TEAM_ID
 ```
 
-Replace `T1YQ7DT88` with the team ID from `slack auth list` when installing in another workspace. Follow any installation prompts. The verification command should show the app ID and `Status: Installed`.
+If the intended app is already installed and listed, continue to step 4. To create an installation, run the following with your workspace's team ID and note the returned app ID:
 
-The `deployed` option selects the app's CLI environment. Installation creates the Slack app and grants its permissions; the Python process must also be running for the bot to respond. Follow **Run the app** below and invite the bot to each public or private channel it should monitor with `/invite @xcancel`.
+```sh
+slack app install --team YOUR_TEAM_ID --environment deployed
+```
 
-If installation reports `runtime_not_found` or a missing `slack_cli_hooks` module, confirm that `.venv/bin/python` exists and reinstall the dependencies with `.venv/bin/python -m pip install -r requirements.txt`.
+The CLI reads `manifest.json` and uploads `assets/icon.png`. Follow any permission prompts. A successful installation reports `Status: Installed`.
 
-### Using the Slack website
+### 4. Link the installed app for local execution
 
-1. Open [Create New Slack App](https://api.slack.com/apps/new), choose **From an app manifest**, and select the workspace.
-2. Paste the contents of [`manifest.json`](./manifest.json), review the configuration, and create the app.
-3. In **OAuth & Permissions**, install the app to the workspace and copy the **Bot User OAuth Token**.
-4. In **Basic Information**, create an app-level token with the `connections:write` scope and copy it.
-5. Invite the bot to each public or private channel it should monitor with `/invite @xcancel`.
+`slack run` needs a local app mapping. Link the existing installation so the CLI starts the same bot that is already in your channels:
 
-The manifest requests these bot permissions and event subscriptions:
+```sh
+slack app link --team YOUR_TEAM_ID --app YOUR_APP_ID --environment local
+```
 
-- `channels:history` to receive public-channel messages
-- `groups:history` to receive messages in private channels where the bot is invited
-- `chat:write` to post thread replies
-- `message.channels` for new public-channel message events
-- `message.groups` for new private-channel message events
+If this reports `app_found`, check `slack app list` and confirm that the intended app is `YOUR_APP_ID`. Then repeat with `--force` to update the saved mapping:
 
-If the app was previously installed with the sample configuration, reinstall it after updating the manifest so the old sample scopes, commands, and event subscriptions are removed.
+```sh
+slack app link --team YOUR_TEAM_ID --app YOUR_APP_ID --environment local --force
+```
 
-Set the two tokens in the shell where you will run the app:
+This mapping is saved in the Git-ignored `.slack/apps.dev.json`. Repeat this step after a fresh clone or on another computer. The app ID stays the same; Slack labels the app `xcancel (local)` during the local run.
+
+### 5. Start the bot
+
+```sh
+slack run --app YOUR_APP_ID --team YOUR_TEAM_ID --no-color
+```
+
+The CLI applies the manifest, installs the app as needed, supplies `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, and starts `app.py` through the Python hook. Wait for these log messages:
+
+```text
+Bolt app is running!
+Starting to receive messages from a new connection
+```
+
+Leave the terminal running. Use one running process for this app. Stop it with `Ctrl-C`; run the same command again to restart. The local CLI run watches Python files for changes.
+
+### 6. Invite and test
+
+In Slack, open the intended channel and use its **Agents & apps** settings to add XCancel, or use `/invite` and select the XCancel app. It must be a member of each public or private channel it should monitor. Choose a channel where you have permission to test the app.
+
+Post this test message yourself:
+
+```text
+XCancel test: https://x.com/example/status/123 https://twitter.com/example/status/456
+```
+
+Expect one thread reply containing two bold **X-Cancel Link:** labels and the corresponding `xcancel.com` URLs. These example post IDs test URL conversion; they do not need to identify real posts. Repeat a link to check deduplication, and post a link inside the thread to check thread replies. Editing the source message does not trigger another reply.
+
+### Apply updates
+
+Stop the running process with `Ctrl-C`, then update the checkout and dependencies:
+
+```sh
+git pull --ff-only
+.venv/bin/python -m pip install -r requirements.txt
+slack app install --team YOUR_TEAM_ID --app YOUR_APP_ID
+slack run --app YOUR_APP_ID --team YOUR_TEAM_ID --no-color
+```
+
+Complete any permission prompts when scopes change. Private-channel support requires `groups:history` and `message.groups`; the manifest also includes `channels:history`, `message.channels`, and `chat:write`. Direct messages and group DMs are ignored.
+
+### Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| `runtime_not_found` or missing `slack_cli_hooks` | Confirm `.venv/bin/python` exists and rerun `.venv/bin/python -m pip install -r requirements.txt`. |
+| `app_not_found` from `slack run` | Complete step 4 for the same team and app IDs. A deployed mapping alone is insufficient for local execution. |
+| CLI authentication fails | Run `slack login` again and confirm the workspace with `slack auth list`. |
+| App appears installed but sends no replies | Check that the process is connected and the bot is a channel member. Confirm the message is new, human-authored, and contains an HTTP(S) X/Twitter URL. |
+| Private-channel messages produce no reply | Apply the updated manifest and permissions, then restart the process. |
+
+## Run Python directly with manually managed tokens
+
+Use this path when starting `app.py` without the Slack CLI. Select your installation from [Your Apps](https://api.slack.com/apps).
+
+1. In **OAuth & Permissions**, install or reinstall the app if needed and copy its **Bot User OAuth Token**, beginning with `xoxb-`.
+2. In **Basic Information → App-Level Tokens**, generate a token with the `connections:write` scope. This token begins with `xapp-`. Socket Mode must be enabled, as configured in this project's manifest.
+
+In zsh, these prompts keep token values out of shell history and hide them while you paste:
 
 ```zsh
-export SLACK_BOT_TOKEN="xoxb-your-bot-token"
-export SLACK_APP_TOKEN="xapp-your-app-token"
-```
-
-Keep these values out of source control and logs.
-
-### Update an existing installation for private channels
-
-Apply the updated manifest and grant the new `groups:history` permission by reinstalling the existing app:
-
-```sh
-slack app install --team T1YQ7DT88 --app A0C0RN0FJD8
-```
-
-Restart the bot process with the updated code. In AI Systems Guild, `#mods` is a private channel suitable for this check once the bot is invited. Private-channel messages are available only where the bot is a member. Direct messages and group DMs are ignored.
-
-## Run the app
-
-From the project directory, with the environment variables set, use either entry point:
-
-```sh
-# Slack CLI
-slack run
-
-# Directly from the virtual environment
+read -rs 'SLACK_BOT_TOKEN?Paste bot token: '; printf '\n'
+read -rs 'SLACK_APP_TOKEN?Paste app-level token: '; printf '\n'
+export SLACK_BOT_TOKEN SLACK_APP_TOKEN
 .venv/bin/python app.py
 ```
 
-The Slack CLI option uses the repository's CLI hooks. Stop the process with `Ctrl-C`.
+Token entry happens locally in your terminal. Keep tokens out of Git, screenshots, and shared logs. `app.py` reads environment variables directly; it does not automatically load a `.env` file. Stop with `Ctrl-C` and clear the shell variables when finished:
+
+```sh
+unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
+```
 
 ## URL behavior
 
