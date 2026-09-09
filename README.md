@@ -1,5 +1,7 @@
 # XCancel Slack bot
 
+![XCancel logo](assets/icon.png)
+
 This Slack app watches public and private channels where it has been invited. When a person posts a message containing an X or Twitter URL, the app replies in the message thread with an `xcancel.com` link for each distinct matching URL.
 
 For example, a message containing `https://x.com/example/status/123` receives this thread reply:
