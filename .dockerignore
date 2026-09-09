@@ -1,0 +1,10 @@
+# Only runtime files enter the build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements-runtime.txt
+!app.py
+!listeners/
+!listeners/**
+listeners/**/__pycache__/
+listeners/**/*.pyc

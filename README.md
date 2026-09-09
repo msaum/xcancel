@@ -148,6 +148,80 @@ Token entry happens locally in your terminal. Keep tokens out of Git, screenshot
 unset SLACK_BOT_TOKEN SLACK_APP_TOKEN
 ```
 
+## Host with Docker
+
+Use an always-on host with Docker installed and outbound HTTPS/WebSocket access to Slack. The container runs `app.py` directly. Configure tokens at runtime using the manual token steps above; the Slack CLI and its local credentials are not included in the image.
+
+### Build the image
+
+From the project root:
+
+```sh
+docker build --pull -t xcancel:latest .
+```
+
+The image uses Python 3.14, installs `requirements-runtime.txt`, and runs as an unprivileged user. The build context excludes credentials, Git data, and local caches.
+
+### Supply the tokens
+
+Create a private environment file on the Docker host. The following commands create `.env.docker` if needed without overwriting an existing file:
+
+```sh
+touch .env.docker
+chmod 600 .env.docker
+```
+
+Edit it locally and replace the placeholders with the bot and app-level tokens from the same Slack app:
+
+```dotenv
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+```
+
+Use plain values without shell `export` statements or surrounding quotes. This file is excluded from Git and the Docker build context. Docker administrators can inspect container environment variables, so restrict access to the host.
+
+### Start and verify
+
+Stop any existing local `slack run` or Python process for this bot before starting the container. Keep one instance running.
+
+```sh
+docker run -d \
+  --name xcancel \
+  --restart unless-stopped \
+  --env-file .env.docker \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  xcancel:latest
+
+docker logs --tail 50 -f xcancel
+```
+
+Wait for `Bolt app is running!` and `Starting to receive messages from a new connection`, then post a test link in a channel where the bot has been invited. Press `Ctrl-C` to stop following logs; the detached container keeps running. Socket Mode uses outbound connections, so no port mapping or public endpoint is needed.
+
+Configure Docker to start when the host boots. The `unless-stopped` policy restarts the container after failures or daemon restarts; an explicitly stopped container stays stopped until started again. See [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+### Stop, restart, and update
+
+```sh
+docker stop xcancel
+docker start xcancel
+```
+
+To deploy code or dependency updates, build the new image before replacing the container:
+
+```sh
+git pull --ff-only
+docker build --pull -t xcancel:latest .
+docker stop xcancel
+docker rm xcancel
+```
+
+Run the `docker run` command above again, then verify the connection logs and test a link. The bot keeps no persistent application data in the container; its duplicate-event cache resets on restart. The environment file remains on the host.
+
+Token changes also require recreating the container with `--env-file`; `docker restart` retains its existing environment. Apply any changed Slack scopes or event subscriptions with `slack app install --team YOUR_TEAM_ID --app YOUR_APP_ID` from a CLI-authenticated checkout. Rebuilding the image alone does not update Slack's app configuration.
+
+If the container exits or restarts repeatedly, inspect `docker logs --tail 100 xcancel` and check both tokens. A running container without a Slack connection is not ready to process messages.
+
 ## URL behavior
 
 The app recognizes `http://` and `https://` URLs whose exact hostname is one of:
